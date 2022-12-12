@@ -37,16 +37,20 @@ public class SwiftAppLinksPlugin: NSObject, FlutterPlugin, FlutterStreamHandler 
     _ application: UIApplication,
     continue userActivity: NSUserActivity,
     restorationHandler: @escaping ([Any]) -> Void) -> Bool {
-
-    switch userActivity.activityType {
-      case NSUserActivityTypeBrowsingWeb:
-        guard let url = userActivity.webpageURL else {
-          return false
-        }
-        handleLink(url: url)
-        return false
-      default: return false
-    }
+      let clickTrackerStr: String = "clicks.peggy.com"
+      if userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+        let url = userActivity.webpageURL {
+          if url.absoluteString.contains(clickTrackerStr) {
+            let r = Redirect()
+            r.makeRequest(url: url, callback: { (location) in
+              guard let locationURL = location else {return}
+              self.handleLink(url: locationURL)
+            })
+          } else {
+            handleLink(url: url)
+          }
+      }
+      return false
   }
 
   // Custom URL schemes
@@ -90,3 +94,39 @@ public class SwiftAppLinksPlugin: NSObject, FlutterPlugin, FlutterStreamHandler 
     _eventSink(latestLink)
   }
 }
+
+class Redirect : NSObject {
+    var session: URLSession?
+    
+    override init() {
+        super.init()
+        session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    }
+    
+    func makeRequest(url: URL, callback: @escaping (URL?) -> ()) {
+        let task = self.session?.dataTask(with: url) {(data, response, error) in
+            guard error == nil else {
+                print(error!)
+                return
+            }
+            
+            guard response != nil else {
+                return
+            }
+            if let response = response as? HTTPURLResponse {
+                if let l = (response.allHeaderFields as NSDictionary)["Location"] as? String {
+                    callback(URL(string: l))
+                }    
+            }
+        }
+        task?.resume()
+    }
+}
+
+extension Redirect: URLSessionDelegate, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        // Stops the redirection, and returns (internally) the response body.
+        completionHandler(nil)
+    }
+}
+
